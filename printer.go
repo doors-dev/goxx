@@ -3,6 +3,7 @@ package goxx
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 
@@ -11,6 +12,24 @@ import (
 	"github.com/gammazero/deque"
 )
 
+// NewPrinter returns a GoX printer that renders gox.Comp and gox.Elem values
+// with support for Parallel subtrees.
+//
+// To run part of a template in parallel, proxy that fragment to
+// ~>(goxx.Parallel()). NewPrinter schedules those marked fragments on its
+// worker pool while the rest of the template continues rendering.
+//
+// Output is buffered per parallel branch and drained to w in source order. By
+// default the printer uses seven workers and gox.NewPrinter for sequential
+// chunks. Use OptionWorkers to tune or remove the worker limit. A negative
+// worker count panics.
+//
+// Use WriterError to check whether elem.Print failed because of the final
+// io.Writer. Other render errors are returned before buffered output is written
+// to w. In HTTP handlers, that usually leaves room to send an error response
+// with the correct status code. Check for context.Canceled and
+// context.DeadlineExceeded separately: they mean the render context ended
+// before rendering finished.
 func NewPrinter(w io.Writer, opts ...Option) gox.Printer {
 	p := printer{
 		w:          w,
@@ -40,7 +59,10 @@ func (p printer) Send(j gox.Job) error {
 		gox.Release(j)
 		return p.printComp(ctx, comp)
 	}
-	slog.Warn("goxx printer is used for non gox.Comp/gox.Elem, features are disabled")
+	slog.Warn(
+		"goxx.NewPrinter received a non-component job; parallel rendering is disabled for this job",
+		"job_type", fmt.Sprintf("%T", j),
+	)
 	printer := p.newPrinter(p.w)
 	return printer.Send(j)
 }
@@ -52,12 +74,13 @@ func (p printer) printComp(ctx context.Context, comp gox.Comp) error {
 		if el == nil {
 			return nil
 		}
-		printer := parallelPrinter{
+		printer := &parallelPrinter{
 			queue:      root,
 			thread:     t,
 			newPrinter: p.newPrinter,
 			flat:       p.flat,
 		}
+		printer.initPrinter()
 		cur := gox.NewCursor(ctx, printer)
 		return el(cur)
 	})

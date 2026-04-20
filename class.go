@@ -1,98 +1,110 @@
 package goxx
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"log/slog"
+	"slices"
 	"strings"
-	"unicode"
 
 	"github.com/doors-dev/gox"
 )
 
+// Class builds a class modifier from one or more class strings.
+//
+// Each argument is split with strings.Fields, so Class("a", "b c") and
+// Class("a b c") produce the same classes. The returned value can be used as a
+// class attribute value, as an attribute modifier, or as a proxy before an
+// element/component.
 func Class(classes ...string) Classes {
-	return Classes{}.Add(classes...)
-}
-
-type Classes struct {
-	composed string
-	stored   string
-}
-
-func (c Classes) Remove(classes ...string) Classes {
-	builder := strings.Builder{}
-	first := true
-main:
-	for class := range strings.FieldsSeq(c.composed) {
-		for _, remove := range classes {
-			for removeClass := range strings.FieldsSeq(remove) {
-				if removeClass == class {
-					continue main
-				}
-			}
-		}
-		if first {
-			first = false
-		} else {
-			builder.WriteByte(' ')
-		}
-		builder.WriteString(class)
-	}
-	c.composed = builder.String()
-	return c
-}
-
-func (c Classes) Add(classes ...string) Classes {
-	builder := strings.Builder{}
-	prev := string(c.composed)
-	builder.WriteString(prev)
+	c := Classes{}
 	for _, class := range classes {
-		if !rightSpaced(prev) && !leftSpaced(class) {
-			builder.WriteByte(' ')
+		for class := range strings.FieldsSeq(class) {
+			c.add = append(c.add, class)
 		}
-		builder.WriteString(class)
-		prev = class
 	}
-	c.composed = builder.String()
 	return c
 }
 
+// Classes describes class names to add and remove.
+//
+// Classes values are immutable: Add, Remove, Join, and Clone return a new value
+// and leave the receiver unchanged.
+type Classes struct {
+	add    []string
+	remove []string
+}
+
+// Add returns a new Classes value with classes appended.
+//
+// Arguments are split like Class, so Add("a", "b c") adds three classes.
+func (c Classes) Add(classes ...string) Classes {
+	c = c.Clone()
+	for _, class := range classes {
+		for class := range strings.FieldsSeq(class) {
+			c.add = append(c.add, class)
+		}
+	}
+	return c
+}
+
+// Remove returns a new Classes value that omits matching classes from output.
+//
+// Removed classes are filtered regardless of whether they were added before or
+// after Remove was called.
+func (c Classes) Remove(classes ...string) Classes {
+	c = c.Clone()
+	for _, removeClass := range classes {
+		for removeClass := range strings.FieldsSeq(removeClass) {
+			c.remove = append(c.remove, removeClass)
+		}
+	}
+	return c
+}
+
+// Join returns a new Classes value that combines several class modifiers.
+//
+// Both added and removed class names are preserved, so removals from joined
+// values still affect the final rendered class list.
 func (c Classes) Join(classes ...Classes) Classes {
-	builder := strings.Builder{}
-	prev := c.composed
-	builder.WriteString(prev)
-	for _, c := range classes {
-		if !rightSpaced(prev) && !leftSpaced(c.composed) {
-			builder.WriteByte(' ')
-		}
-		builder.WriteString(c.composed)
-		prev = c.composed
+	c = c.Clone()
+	for _, classes := range classes {
+		c.add = append(c.add, classes.add...)
+		c.remove = append(c.remove, classes.remove...)
 	}
-	c.composed = builder.String()
 	return c
 }
 
-func (c Classes) String() string {
-	w := &strings.Builder{}
-	if err := c.Output(w); err != nil {
-		panic(err)
+func (c Classes) Mutate(name string, prev any) any {
+	if name != "class" {
+		slog.Warn(
+			"goxx.Class used on a non-class attribute",
+			"attribute", name,
+			"expected", "class",
+		)
 	}
-	return w.String()
+	if classes, ok := prev.(Classes); ok {
+		return classes.Join(c)
+	}
+	if s, ok := prev.(string); ok {
+		classes := Class(s)
+		return classes.Join(c)
+	}
+	if s, ok := prev.(fmt.Stringer); ok {
+		classes := Class(s.String())
+		return classes.Join(c)
+	}
+	return c
 }
 
-func (c Classes) Output(w io.Writer) error {
-	if _, err := io.WriteString(w, c.composed); err != nil {
-		return err
-	}
-	if !rightSpaced(c.composed) && !leftSpaced(c.stored) {
-		if _, err := io.WriteString(w, " "); err != nil {
-			return err
-		}
-	}
-	if _, err := io.WriteString(w, c.stored); err != nil {
-		return err
-	}
-	return nil
+// Clone returns an independent copy of c.
+func (c Classes) Clone() Classes {
+	c.add = slices.Clone(c.add)
+	c.remove = slices.Clone(c.remove)
+	return c
 }
 
 func (c Classes) Modify(ctx context.Context, tag string, atts gox.Attrs) error {
@@ -100,38 +112,37 @@ func (c Classes) Modify(ctx context.Context, tag string, atts gox.Attrs) error {
 	return nil
 }
 
-func (c Classes) Mutate(name string, prev any) any {
-	if name != "class" {
-		slog.Warn("Class helper is assined to not `class` attribute: " + name)
-	}
-	if prevc, ok := prev.(Classes); ok {
-		return prevc.Join(c)
-	}
-	if s, ok := prev.(string); ok {
-		c.stored = s
-		return c
-	}
-	return c
-}
-
 func (c Classes) Proxy(cur gox.Cursor, el gox.Elem) error {
 	return ProxyMod(c).Proxy(cur, el)
 }
 
-
-func rightSpaced(s string) bool {
-	if len(s) == 0 {
-		return true
+// String returns the class list as it would be rendered in a class attribute.
+func (c Classes) String() string {
+	buf := bytes.Buffer{}
+	if err := c.Output(&buf); err != nil {
+		panic(errors.Join(err, errors.New("class buffer output can't error")))
 	}
-	return unicode.IsSpace(rune(s[len(s)-1]))
+	return buf.String()
 }
 
-func leftSpaced(s string) bool {
-	if len(s) == 0 {
-		return true
+func (c Classes) Output(w io.Writer) error {
+	first := true
+main:
+	for _, class := range c.add {
+		for _, remove := range c.remove {
+			if remove == class {
+				continue main
+			}
+		}
+		if !first {
+			if _, err := io.WriteString(w, " "); err != nil {
+				return err
+			}
+		}
+		first = false
+		if _, err := io.WriteString(w, class); err != nil {
+			return err
+		}
 	}
-	return unicode.IsSpace(rune(s[0]))
+	return nil
 }
-
-
-

@@ -7,6 +7,17 @@ import (
 	"github.com/doors-dev/gox"
 )
 
+// ProxyMod returns a proxy that applies mod to the first element rendered by
+// elem.
+//
+// Use it to build helpers that attach attributes or attribute modifiers to
+// another element or component. If elem starts with a component or container,
+// ProxyMod carries mod forward until it reaches the first element. Text or other
+// non-element output before that element is an error. The modifier is applied
+// once; later sibling elements are left unchanged.
+//
+// Parallel markers are preserved, so the wrapped subtree can still be
+// scheduled by NewPrinter.
 func ProxyMod(mod gox.Modify) gox.Proxy {
 	return gox.ProxyFunc(func(cur gox.Cursor, el gox.Elem) error {
 		printer := &modPrinter{

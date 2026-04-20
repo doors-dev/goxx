@@ -3,6 +3,7 @@ package thread
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -58,6 +59,16 @@ func requireIgnoredTask(t *testing.T, ran *atomic.Bool, message string) {
 	}
 }
 
+func newTestTask(spawner spawner, f func(Thread) error) (task, <-chan struct{}) {
+	host := newHost()
+	th := &thread{
+		spawner: spawner,
+		host:    host,
+	}
+	th.counter.Add(1)
+	return task{thread: th, fun: f}, host.ch()
+}
+
 func TestSubmitRejectsNegativeLimit(t *testing.T) {
 	defer func() {
 		if recover() == nil {
@@ -111,7 +122,7 @@ func TestRootPanicIsRecoveredAndReturnedAsError(t *testing.T) {
 	}
 }
 
-func TestSubmitReturnsWhenParentAlreadyCanceled(t *testing.T) {
+func TestSubmitReturnsContextCanceledWhenParentAlreadyCanceled(t *testing.T) {
 	parent, cancel := context.WithCancel(context.Background())
 	cancel()
 
@@ -123,8 +134,114 @@ func TestSubmitReturnsWhenParentAlreadyCanceled(t *testing.T) {
 		})
 	}()
 
-	if err := waitForErr(t, done, "Submit after parent cancellation"); err != nil {
-		t.Fatalf("Submit() error = %v, want nil", err)
+	if err := waitForErr(t, done, "Submit after parent cancellation"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Submit() error = %v, want %v", err, context.Canceled)
+	}
+}
+
+func TestUnlimitedSubmitReturnsContextCanceledWhenParentAlreadyCanceled(t *testing.T) {
+	parent, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- Root(parent, 0, func(context.Context, Thread) error {
+			t.Fatal("root ran after parent cancellation")
+			return nil
+		})
+	}()
+
+	if err := waitForErr(t, done, "unlimited Submit after parent cancellation"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Submit() error = %v, want %v", err, context.Canceled)
+	}
+}
+
+func TestInternalLimitedSpawnerRejectsNonPositiveLimit(t *testing.T) {
+	for _, limit := range []int{0, -1} {
+		t.Run("limit "+strconv.Itoa(limit), func(t *testing.T) {
+			defer func() {
+				if recover() == nil {
+					t.Fatalf("newLimitedSpawner did not panic for limit %d", limit)
+				}
+			}()
+
+			_, _ = newLimitedSpawner(context.Background(), limit)
+		})
+	}
+}
+
+func TestLimitedSpawnerIgnoresSpawnAfterShutdown(t *testing.T) {
+	sp, _ := newLimitedSpawner(context.Background(), 1)
+	sp.shutdown()
+
+	var ran atomic.Bool
+	tk, done := newTestTask(sp, func(Thread) error {
+		ran.Store(true)
+		return nil
+	})
+	sp.spawn(tk)
+
+	waitForClose(t, done, "task release after limited spawner shutdown")
+	if ran.Load() {
+		t.Fatal("task ran after limited spawner shutdown")
+	}
+}
+
+func TestLimitedSubmitColdAfterShutdownReleasesTask(t *testing.T) {
+	sp, _ := newLimitedSpawner(context.Background(), 1)
+	s := sp.(*limitedSpawner)
+	s.shutdown()
+
+	var ran atomic.Bool
+	tk, done := newTestTask(sp, func(Thread) error {
+		ran.Store(true)
+		return nil
+	})
+	s.submitCold(tk)
+
+	waitForClose(t, done, "cold task release after limited spawner shutdown")
+	if ran.Load() {
+		t.Fatal("cold task ran after limited spawner shutdown")
+	}
+}
+
+func TestLimitedSubmitHotAfterShutdownReleasesTask(t *testing.T) {
+	sp, _ := newLimitedSpawner(context.Background(), 1)
+	s := sp.(*limitedSpawner)
+	s.pool = append(s.pool, make(chan task))
+	s.hot <- 0
+	s.shutdown()
+
+	var ran atomic.Bool
+	tk, done := newTestTask(sp, func(Thread) error {
+		ran.Store(true)
+		return nil
+	})
+	if !s.submitHot(tk) {
+		t.Fatal("submitHot() = false, want true")
+	}
+
+	waitForClose(t, done, "hot task release after limited spawner shutdown")
+	if ran.Load() {
+		t.Fatal("hot task ran after limited spawner shutdown")
+	}
+}
+
+func TestUnlimitedSpawnerExecuteAfterShutdownReleasesTask(t *testing.T) {
+	sp, _ := newUnlimitedSpawner(context.Background())
+	s := sp.(*unlimitedSpawner)
+	s.shutdown()
+
+	var ran atomic.Bool
+	tk, done := newTestTask(sp, func(Thread) error {
+		ran.Store(true)
+		return nil
+	})
+	s.execute(tk)
+
+	waitForClose(t, done, "task release after unlimited spawner shutdown")
+	if ran.Load() {
+		t.Fatal("task ran after unlimited spawner shutdown")
 	}
 }
 
@@ -232,6 +349,23 @@ func TestUnlimitedSpawnerRunsSpawnedTasks(t *testing.T) {
 	}
 	waitForClose(t, firstRan, "first unlimited task run")
 	waitForClose(t, secondRan, "second unlimited task run")
+}
+
+func TestUnlimitedTaskErrorCancelsContextAndIsReturned(t *testing.T) {
+	wantErr := errors.New("unlimited failure")
+	var childCtx context.Context
+
+	err := Root(context.Background(), 0, func(ctx context.Context, th Thread) error {
+		childCtx = ctx
+		th.Go(func(Thread) error {
+			return wantErr
+		})
+		return nil
+	})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("Submit() error = %v, want %v", err, wantErr)
+	}
+	waitForClose(t, childCtx.Done(), "derived context cancellation")
 }
 
 func TestFirstErrorCancelsContextSkipsQueuedWorkAndIsReturned(t *testing.T) {
@@ -350,7 +484,7 @@ func TestPanicIsRecoveredAndReturnedAsError(t *testing.T) {
 	waitForClose(t, childCtx.Done(), "derived context cancellation")
 }
 
-func TestGoAfterParentCancellationIsIgnored(t *testing.T) {
+func TestGoAfterParentCancellationIsIgnoredAndReturned(t *testing.T) {
 	parent, cancel := context.WithCancel(context.Background())
 	var ran atomic.Bool
 
@@ -362,13 +496,13 @@ func TestGoAfterParentCancellationIsIgnored(t *testing.T) {
 		})
 		return nil
 	})
-	if err != nil {
-		t.Fatalf("Submit() error = %v, want nil", err)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Submit() error = %v, want %v", err, context.Canceled)
 	}
 	requireIgnoredTask(t, &ran, "task ran after parent cancellation")
 }
 
-func TestParentCancellationSkipsQueuedWork(t *testing.T) {
+func TestParentCancellationSkipsQueuedWorkAndIsReturned(t *testing.T) {
 	parent, cancel := context.WithCancel(context.Background())
 	firstStarted := make(chan struct{})
 	releaseFirst := make(chan struct{})
@@ -391,8 +525,8 @@ func TestParentCancellationSkipsQueuedWork(t *testing.T) {
 		close(releaseFirst)
 		return nil
 	})
-	if err != nil {
-		t.Fatalf("Submit() error = %v, want nil", err)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Submit() error = %v, want %v", err, context.Canceled)
 	}
 	requireNotClosedWithin(t, queuedRan, 25*time.Millisecond, "queued task run after parent cancellation")
 }
@@ -409,8 +543,16 @@ func TestGoAfterCallbackReturnsPanics(t *testing.T) {
 	}
 
 	defer func() {
-		if r := recover(); r == nil {
+		r := recover()
+		if r == nil {
 			t.Fatal("Go after callback returned did not panic")
+		}
+		err, ok := r.(scheduleError)
+		if !ok {
+			t.Fatalf("Go after callback returned panic = %T, want scheduleError", r)
+		}
+		if got, want := err.Error(), "thread is used after consumption"; got != want {
+			t.Fatalf("scheduleError.Error() = %q, want %q", got, want)
 		}
 	}()
 	saved.Go(func(Thread) error {
