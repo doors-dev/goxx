@@ -1,0 +1,10 @@
+github.com/doors-dev/gox v0.1.25 h1:8kb5kl54X9KQuZFYKy8oTgaEk/5L+I0/i8nTeVxp8Go=
+github.com/doors-dev/gox v0.1.25/go.mod h1:8kgAyI7zQ29c/PlcnmR15Hv+fQqpgJvJfN3tnGn7t5o=
+github.com/doors-dev/gox v0.1.26 h1:l4Mc0v1JUc3uiRyIuzQwnTnCdcxt0P1qINo1n7aYm6s=
+github.com/doors-dev/gox v0.1.26/go.mod h1:8kgAyI7zQ29c/PlcnmR15Hv+fQqpgJvJfN3tnGn7t5o=
+github.com/doors-dev/gox v0.1.27 h1:wtTW1lpmjEUCZjHLxbv1y2lVVCsWQ0vhZ6lRiVde+6s=
+github.com/doors-dev/gox v0.1.27/go.mod h1:8kgAyI7zQ29c/PlcnmR15Hv+fQqpgJvJfN3tnGn7t5o=
+github.com/gammazero/deque v1.2.1 h1:9fnQVFCCZ9/NOc7ccTNqzoKd1tCWOqeI05/lPqFPMGQ=
+github.com/gammazero/deque v1.2.1/go.mod h1:5nSFkzVm+afG9+gy0VIowlqVAW4N8zNcMne+CMQVD2g=
+golang.org/x/sync v0.20.0 h1:e0PTpb7pjO8GAtTs2dQ6jYa5BWYlMuX047Dco/pItO4=
+golang.org/x/sync v0.20.0/go.mod h1:9xrNwdLfx4jkKbNva9FpL6vEN7evnE43NNNJQ2LF3+0=
