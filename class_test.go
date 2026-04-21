@@ -153,7 +153,7 @@ func TestClassesRenderThroughGeneratedSyntaxShapes(t *testing.T) {
 		if err := cur.Init("span"); err != nil {
 			return err
 		}
-		if err := cur.AttrSet("class", "test2"); err != nil {
+		if err := cur.Set("class", "test2"); err != nil {
 			return err
 		}
 		if err := cur.Submit(); err != nil {
@@ -265,11 +265,11 @@ func spanWithClassMod(cur gox.Cursor, classes goxx.Classes, class string) error 
 	if err := cur.Init("span"); err != nil {
 		return err
 	}
-	if err := cur.AttrMod(classes); err != nil {
+	if err := cur.Modify(classes); err != nil {
 		return err
 	}
 	if class != "" {
-		if err := cur.AttrSet("class", class); err != nil {
+		if err := cur.Set("class", class); err != nil {
 			return err
 		}
 	}
@@ -283,7 +283,7 @@ func spanWithClassAttr(cur gox.Cursor, classes goxx.Classes) error {
 	if err := cur.Init("span"); err != nil {
 		return err
 	}
-	if err := cur.AttrSet("class", classes); err != nil {
+	if err := cur.Set("class", classes); err != nil {
 		return err
 	}
 	if err := cur.Submit(); err != nil {
@@ -302,7 +302,7 @@ func spanWithClass(class string) gox.Elem {
 			return err
 		}
 		if class != "" {
-			if err := cur.AttrSet("class", class); err != nil {
+			if err := cur.Set("class", class); err != nil {
 				return err
 			}
 		}

@@ -39,7 +39,7 @@ func TestProxyModCarriesClassThroughComponent(t *testing.T) {
 		if err := cur.Init("span"); err != nil {
 			return err
 		}
-		if err := cur.AttrSet("class", "base"); err != nil {
+		if err := cur.Set("class", "base"); err != nil {
 			return err
 		}
 		if err := cur.Submit(); err != nil {

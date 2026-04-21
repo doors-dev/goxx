@@ -447,7 +447,7 @@ func TestParallelPrinterRendersHTMLAroundParallelBranch(t *testing.T) {
 			if err := cur.Init("main"); err != nil {
 				return err
 			}
-			if err := cur.AttrSet("id", "root"); err != nil {
+			if err := cur.Set("id", "root"); err != nil {
 				return err
 			}
 			if err := cur.Submit(); err != nil {
