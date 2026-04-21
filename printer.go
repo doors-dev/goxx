@@ -1,7 +1,6 @@
 package goxx
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -21,35 +20,57 @@ import (
 //
 // Output is buffered per parallel branch and drained to w in source order. By
 // default the printer uses seven workers and gox.NewPrinter for sequential
-// chunks. Use OptionWorkers to tune or remove the worker limit. A negative
+// chunks. Use WithWorkers to tune or remove the worker limit. A negative
 // worker count panics.
+//
+// NewPrinter is useful when you want to pass a printer to gox.Elem.Print. In
+// HTTP handlers, prefer Render: it returns buffered output first, so you can set
+// headers and a custom success status after rendering succeeds and before the
+// response body is written.
 //
 // Use WriterError to check whether elem.Print failed because of the final
 // io.Writer. Other render errors are returned before buffered output is written
-// to w. In HTTP handlers, that usually leaves room to send an error response
-// with the correct status code. Check for context.Canceled and
-// context.DeadlineExceeded separately: they mean the render context ended
-// before rendering finished.
+// to w.
 func NewPrinter(w io.Writer, opts ...Option) gox.Printer {
-	p := printer{
-		w:          w,
-		workers:    7,
-		newPrinter: gox.NewPrinter,
+	p := newPrinter(opts)
+	p.w = w
+	return p
+}
+
+// Render renders comp into buffers and returns the buffered output.
+//
+// Render is the recommended entry point for HTTP handlers. It gives the same
+// parallel rendering behavior as NewPrinter: fragments marked with
+// ~>(goxx.Parallel()) are scheduled on the worker pool, and their buffered
+// output is kept in template order. Rendering finishes before anything is
+// written to the http.ResponseWriter. If rendering succeeds, set headers or a
+// custom success status and then call WriteTo. If rendering fails, no output is
+// returned, so the handler can still send an error response.
+//
+// Check context.Canceled and context.DeadlineExceeded separately: they mean the
+// render context ended before rendering finished. If Render succeeds but
+// WriteTo fails, that error came from the final writer.
+func Render(ctx context.Context, comp gox.Comp, opts ...Option) (WriterToCloser, error) {
+	printer := newPrinter(opts)
+	out, err := printer.render(ctx, comp)
+	if err != nil {
+		return nil, err
 	}
-	for _, opt := range opts {
-		opt.apply(&p)
-	}
-	if p.workers < 0 {
-		panic("Can't have negative worker count")
-	}
+	return out, nil
+}
+
+func newPrinter(opts []Option) printer {
+	p := printer{}
+	o := newOptions(opts)
+	o.apply(&p)
 	return p
 }
 
 type printer struct {
 	w          io.Writer
 	workers    int
-	newPrinter func(w io.Writer) gox.Printer
 	flat       bool
+	newPrinter func(w io.Writer) gox.Printer
 }
 
 func (p printer) Send(j gox.Job) error {
@@ -57,7 +78,7 @@ func (p printer) Send(j gox.Job) error {
 		comp := j.Comp
 		ctx := j.Ctx
 		gox.Release(j)
-		return p.printComp(ctx, comp)
+		return p.sendComp(ctx, comp)
 	}
 	slog.Warn(
 		"goxx.NewPrinter received a non-component job; parallel rendering is disabled for this job",
@@ -67,7 +88,19 @@ func (p printer) Send(j gox.Job) error {
 	return printer.Send(j)
 }
 
-func (p printer) printComp(ctx context.Context, comp gox.Comp) error {
+func (p printer) sendComp(ctx context.Context, comp gox.Comp) error {
+	bt, err := p.render(ctx, comp)
+	if err != nil {
+		return err
+	}
+	_, err = bt.WriteTo(p.w)
+	if err != nil {
+		return WriteErr{err}
+	}
+	return nil
+}
+
+func (p printer) render(ctx context.Context, comp gox.Comp) (*bufferTree, error) {
 	root := new(deque.Deque[any])
 	err := thread.Root(ctx, p.workers, func(ctx context.Context, t thread.Thread) error {
 		el := comp.Main()
@@ -84,36 +117,10 @@ func (p printer) printComp(ctx context.Context, comp gox.Comp) error {
 		cur := gox.NewCursor(ctx, printer)
 		return el(cur)
 	})
-	return p.drain(root, err)
-}
-
-func (p printer) drain(root *deque.Deque[any], err error) error {
-	stack := []*deque.Deque[any]{root}
-main:
-	queue := stack[len(stack)-1]
-	for item := range queue.IterPopFront() {
-		switch item := item.(type) {
-		case *bytes.Buffer:
-			if err != nil {
-				putBuffer(item)
-				continue
-			}
-			_, writeErr := item.WriteTo(p.w)
-			putBuffer(item)
-			if writeErr != nil {
-				err = WriteErr{writeErr}
-			}
-		case *deque.Deque[any]:
-			stack = append(stack, item)
-			goto main
-		default:
-			panic("Unexpected item type")
-		}
+	bt := newBufferTree(root)
+	if err != nil {
+		bt.Close()
+		return nil, err
 	}
-	stack[len(stack)-1] = nil
-	stack = stack[:len(stack)-1]
-	if len(stack) != 0 {
-		goto main
-	}
-	return err
+	return &bt, nil
 }

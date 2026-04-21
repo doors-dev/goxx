@@ -10,28 +10,27 @@ import (
 	"github.com/doors-dev/goxx"
 )
 
-func ExampleNewPrinter_errorHandling() {
+func ExampleRender_httpHandler() {
 	page := gox.Elem(func(cur gox.Cursor) error {
 		return cur.Text("ok")
 	})
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		err := page.Print(r.Context(), goxx.NewPrinter(w))
-		if err == nil {
-			return
-		}
-
-		if err, ok := goxx.WriterError(err); ok {
-			slog.Warn("response write failed", "err", err)
-			return
-		}
-
+		out, err := goxx.Render(r.Context(), page)
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			slog.Debug("render stopped before completion", "err", err)
 			return
 		}
+		if err != nil {
+			http.Error(w, "render failed", http.StatusInternalServerError)
+			return
+		}
 
-		http.Error(w, "render failed", http.StatusInternalServerError)
+		w.WriteHeader(http.StatusOK)
+
+		if _, err := out.WriteTo(w); err != nil {
+			slog.Warn("response write failed", "err", err)
+		}
 	})
 
 	_ = handler

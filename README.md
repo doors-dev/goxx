@@ -31,13 +31,20 @@ go get github.com/doors-dev/goxx
 
 ### Parallel Rendering
 
-Use `goxx.NewPrinter` instead of `gox.NewPrinter`, then mark independent
-fragments with `~>(goxx.Parallel())`.
+Use `goxx.Render` in HTTP handlers, or `goxx.NewPrinter` when an API expects a
+printer. Mark independent fragments with `~>(goxx.Parallel())`.
 
 ```go
 func handlePage(w http.ResponseWriter, r *http.Request) {
-    if err := Page().Print(r.Context(), goxx.NewPrinter(w)); err != nil {
+    out, err := goxx.Render(r.Context(), Page())
+    if err != nil {
         http.Error(w, err.Error(), http.StatusInternalServerError)
+        return
+    }
+
+    w.WriteHeader(http.StatusOK)
+    if _, err := out.WriteTo(w); err != nil {
+        slog.Warn("response write failed", "err", err)
     }
 }
 ```
@@ -67,61 +74,74 @@ By default, `NewPrinter` uses seven background workers plus the caller goroutine
 
 ```go
 // Use 16 background workers.
-printer := goxx.NewPrinter(w, goxx.OptionWorkers(16))
+printer := goxx.NewPrinter(w, goxx.WithWorkers(16))
 
 // Use plain goroutines instead of a bounded worker pool.
-printer = goxx.NewPrinter(w, goxx.OptionWorkers(0))
+printer = goxx.NewPrinter(w, goxx.WithWorkers(0))
 ```
 
 ### Printer Extensions
 
-`OptionPrinter` lets you add your own printer to the pipeline. It is a factory
+`WithPrinter` lets you add your own printer to the pipeline. It is a factory
 because parallel rendering writes each branch to its own buffer.
 
 ```go
-printer := goxx.NewPrinter(w, goxx.OptionPrinter(func(w io.Writer) gox.Printer {
+printer := goxx.NewPrinter(w, goxx.WithPrinter(func(w io.Writer) gox.Printer {
     return MyPrinter(w)
 }))
 ```
 
 If your custom printer wants expanded content instead of `*gox.JobComp` values,
-use `OptionFlat`.
+use `WithFlat`.
 
 ```go
 printer := goxx.NewPrinter(
     w,
-    goxx.OptionFlat(),
-    goxx.OptionPrinter(func(w io.Writer) gox.Printer {
+    goxx.WithFlat(),
+    goxx.WithPrinter(func(w io.Writer) gox.Printer {
         return MyPrinter(w)
     }),
 )
 ```
 
-### Error Handling
+### HTTP And Error Handling
 
-`NewPrinter` buffers rendered output before writing it to the final `io.Writer`.
-If rendering fails before the final write, nothing is written to that writer.
-This is useful in HTTP handlers because you can still choose the response status.
+`Render` buffers output and returns it before anything is written to the final
+`io.Writer`. This is the recommended shape for HTTP handlers: if rendering
+fails, you can still send an error response; if it succeeds, you can set headers
+and choose a custom success status before writing the body.
 
-Use `WriterError` to detect errors from the final writer itself.
+Check context cancellation separately. It usually means the client went away or
+the request deadline expired before rendering finished.
 
 ```go
-err := Page().Print(r.Context(), goxx.NewPrinter(w))
-if err == nil {
-    return
-}
-
-if err, ok := goxx.WriterError(err); ok {
-    slog.Warn("response write failed", "err", err)
-    return
-}
-
+out, err := goxx.Render(r.Context(), Page())
 if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
     slog.Debug("render stopped before completion", "err", err)
     return
 }
+if err != nil {
+    http.Error(w, "render failed", http.StatusInternalServerError)
+    return
+}
 
-http.Error(w, "render failed", http.StatusInternalServerError)
+w.Header().Set("Content-Type", "text/html; charset=utf-8")
+w.WriteHeader(http.StatusOK)
+
+if _, err := out.WriteTo(w); err != nil {
+    slog.Warn("response write failed", "err", err)
+}
+```
+
+For non-HTTP code that passes `NewPrinter` directly to `elem.Print`,
+`WriterError` detects errors from the final writer:
+
+```go
+if err := Page().Print(ctx, goxx.NewPrinter(dst)); err != nil {
+    if err, ok := goxx.WriterError(err); ok {
+        slog.Warn("write failed", "err", err)
+    }
+}
 ```
 
 ## Class Helpers

@@ -40,8 +40,8 @@ func forEachWorkerVariant(t *testing.T, fn func(t *testing.T, variant workerVari
 	t.Helper()
 	variants := []workerVariant{
 		{name: "default"},
-		{name: "unlimited", opts: []goxx.Option{goxx.OptionWorkers(0)}},
-		{name: "one_worker", opts: []goxx.Option{goxx.OptionWorkers(1)}},
+		{name: "unlimited", opts: []goxx.Option{goxx.WithWorkers(0)}},
+		{name: "one_worker", opts: []goxx.Option{goxx.WithWorkers(1)}},
 	}
 	for _, variant := range variants {
 		t.Run(variant.name, func(t *testing.T) {
@@ -93,7 +93,7 @@ func TestNewPrinterRejectsNegativeWorkerCount(t *testing.T) {
 		}
 	}()
 
-	_ = goxx.NewPrinter(io.Discard, goxx.OptionWorkers(-1))
+	_ = goxx.NewPrinter(io.Discard, goxx.WithWorkers(-1))
 }
 
 func TestNewPrinterDelegatesRootNonComponentJob(t *testing.T) {
@@ -297,7 +297,7 @@ func TestParallelPrinterHonorsWorkerLimit(t *testing.T) {
 
 	done := make(chan renderResult, 1)
 	go func() {
-		html, err := renderString(root, goxx.OptionWorkers(1))
+		html, err := renderString(root, goxx.WithWorkers(1))
 		done <- renderResult{html: html, err: err}
 	}()
 
@@ -340,7 +340,7 @@ func TestParallelPrinterZeroWorkersRunsBranchesWithoutPoolLimit(t *testing.T) {
 
 	done := make(chan renderResult, 1)
 	go func() {
-		html, err := renderString(root, goxx.OptionWorkers(0))
+		html, err := renderString(root, goxx.WithWorkers(0))
 		done <- renderResult{html: html, err: err}
 	}()
 
@@ -406,7 +406,7 @@ func TestParallelPrinterRenderTimeReflectsWorkerSaturation(t *testing.T) {
 	})
 }
 
-func TestOptionPrinterReceivesComponentJobsUnlessFlat(t *testing.T) {
+func TestWithPrinterReceivesComponentJobsUnlessFlat(t *testing.T) {
 	forEachWorkerVariant(t, func(t *testing.T, variant workerVariant) {
 		child := gox.Elem(func(cur gox.Cursor) error {
 			return cur.Text("child")
@@ -416,7 +416,7 @@ func TestOptionPrinterReceivesComponentJobsUnlessFlat(t *testing.T) {
 		})
 
 		var normalCompJobs atomic.Int32
-		got, err := renderString(root, withOptions(variant, goxx.OptionPrinter(countCompPrinter(&normalCompJobs)))...)
+		got, err := renderString(root, withOptions(variant, goxx.WithPrinter(countCompPrinter(&normalCompJobs)))...)
 		if err != nil {
 			t.Fatalf("Print() with custom printer error = %v, want nil", err)
 		}
@@ -428,7 +428,7 @@ func TestOptionPrinterReceivesComponentJobsUnlessFlat(t *testing.T) {
 		}
 
 		var flatCompJobs atomic.Int32
-		got, err = renderString(root, withOptions(variant, goxx.OptionFlat(), goxx.OptionPrinter(countCompPrinter(&flatCompJobs)))...)
+		got, err = renderString(root, withOptions(variant, goxx.WithFlat(), goxx.WithPrinter(countCompPrinter(&flatCompJobs)))...)
 		if err != nil {
 			t.Fatalf("Print() with flat custom printer error = %v, want nil", err)
 		}
@@ -592,7 +592,7 @@ func TestParallelPrinterFlatOptionAppliesInsideParallelBranch(t *testing.T) {
 
 		done := make(chan renderResult, 1)
 		go func() {
-			html, err := renderString(root, withOptions(variant, goxx.OptionFlat())...)
+			html, err := renderString(root, withOptions(variant, goxx.WithFlat())...)
 			done <- renderResult{html: html, err: err}
 		}()
 
@@ -636,6 +636,125 @@ func TestParallelPrinterReturnsParallelBranchError(t *testing.T) {
 		}
 		if got != "" {
 			t.Fatalf("Print() html = %q, want no partial output after error", got)
+		}
+	})
+}
+
+func TestRenderReturnsBufferedOutput(t *testing.T) {
+	forEachWorkerVariant(t, func(t *testing.T, variant workerVariant) {
+		root := gox.Elem(func(cur gox.Cursor) error {
+			if err := cur.Text("before|"); err != nil {
+				return err
+			}
+			if err := goxx.Parallel().Proxy(cur, gox.Elem(func(cur gox.Cursor) error {
+				return cur.Text("parallel|")
+			})); err != nil {
+				return err
+			}
+			return cur.Text("after")
+		})
+
+		out, err := goxx.Render(context.Background(), root, variant.opts...)
+		if err != nil {
+			t.Fatalf("Render() error = %v, want nil", err)
+		}
+
+		var b strings.Builder
+		n, err := out.WriteTo(&b)
+		if err != nil {
+			t.Fatalf("WriteTo() error = %v, want nil", err)
+		}
+		const want = "before|parallel|after"
+		if got := b.String(); got != want {
+			t.Fatalf("WriteTo() output = %q, want %q", got, want)
+		}
+		if n != int64(len(want)) {
+			t.Fatalf("WriteTo() n = %d, want %d", n, len(want))
+		}
+		n, err = out.WriteTo(&b)
+		if err == nil {
+			t.Fatal("second WriteTo() error = nil, want error")
+		}
+		if n != 0 {
+			t.Fatalf("second WriteTo() n = %d, want 0", n)
+		}
+		if err := out.Close(); err != nil {
+			t.Fatalf("Close() after WriteTo error = %v, want nil", err)
+		}
+	})
+}
+
+func TestRenderCloseDiscardsBufferedOutput(t *testing.T) {
+	forEachWorkerVariant(t, func(t *testing.T, variant workerVariant) {
+		root := gox.Elem(func(cur gox.Cursor) error {
+			return cur.Text("discard me")
+		})
+
+		out, err := goxx.Render(context.Background(), root, variant.opts...)
+		if err != nil {
+			t.Fatalf("Render() error = %v, want nil", err)
+		}
+		if err := out.Close(); err != nil {
+			t.Fatalf("Close() error = %v, want nil", err)
+		}
+		if err := out.Close(); err != nil {
+			t.Fatalf("second Close() error = %v, want nil", err)
+		}
+
+		var b strings.Builder
+		n, err := out.WriteTo(&b)
+		if err == nil {
+			t.Fatal("WriteTo() after Close error = nil, want error")
+		}
+		if n != 0 {
+			t.Fatalf("WriteTo() after Close n = %d, want 0", n)
+		}
+		if got := b.String(); got != "" {
+			t.Fatalf("WriteTo() after Close output = %q, want empty", got)
+		}
+	})
+}
+
+func TestRenderReturnsRenderErrorWithoutOutput(t *testing.T) {
+	forEachWorkerVariant(t, func(t *testing.T, variant workerVariant) {
+		wantErr := errors.New("render failed")
+		root := gox.Elem(func(cur gox.Cursor) error {
+			if err := cur.Text("before|"); err != nil {
+				return err
+			}
+			return wantErr
+		})
+
+		out, err := goxx.Render(context.Background(), root, variant.opts...)
+		if !errors.Is(err, wantErr) {
+			t.Fatalf("Render() error = %v, want %v", err, wantErr)
+		}
+		if out != nil {
+			t.Fatalf("Render() output = %v, want nil", out)
+		}
+	})
+}
+
+func TestRenderWriteToReportsPartialBytesOnWriterError(t *testing.T) {
+	forEachWorkerVariant(t, func(t *testing.T, variant workerVariant) {
+		wantErr := errors.New("write failed")
+		root := gox.Elem(func(cur gox.Cursor) error {
+			return cur.Text("hello")
+		})
+
+		out, err := goxx.Render(context.Background(), root, variant.opts...)
+		if err != nil {
+			t.Fatalf("Render() error = %v, want nil", err)
+		}
+		n, err := out.WriteTo(partialErrorWriter{n: 2, err: wantErr})
+		if !errors.Is(err, wantErr) {
+			t.Fatalf("WriteTo() error = %v, want %v", err, wantErr)
+		}
+		if n != 2 {
+			t.Fatalf("WriteTo() n = %d, want 2", n)
+		}
+		if err := out.Close(); err != nil {
+			t.Fatalf("Close() after WriteTo error = %v, want nil", err)
 		}
 	})
 }
@@ -716,4 +835,16 @@ type errorWriter struct {
 
 func (w errorWriter) Write([]byte) (int, error) {
 	return 0, w.err
+}
+
+type partialErrorWriter struct {
+	n   int
+	err error
+}
+
+func (w partialErrorWriter) Write(p []byte) (int, error) {
+	if w.n > len(p) {
+		return len(p), w.err
+	}
+	return w.n, w.err
 }

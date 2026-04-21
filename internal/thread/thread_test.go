@@ -125,16 +125,20 @@ func TestRootPanicIsRecoveredAndReturnedAsError(t *testing.T) {
 func TestSubmitReturnsContextCanceledWhenParentAlreadyCanceled(t *testing.T) {
 	parent, cancel := context.WithCancel(context.Background())
 	cancel()
+	rootRan := errors.New("root ran after parent cancellation")
 
 	done := make(chan error, 1)
 	go func() {
 		done <- Root(parent, 1, func(context.Context, Thread) error {
-			t.Fatal("root ran after parent cancellation")
-			return nil
+			return rootRan
 		})
 	}()
 
-	if err := waitForErr(t, done, "Submit after parent cancellation"); !errors.Is(err, context.Canceled) {
+	err := waitForErr(t, done, "Submit after parent cancellation")
+	if errors.Is(err, rootRan) {
+		t.Fatal("root ran after parent cancellation")
+	}
+	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("Submit() error = %v, want %v", err, context.Canceled)
 	}
 }
@@ -142,16 +146,20 @@ func TestSubmitReturnsContextCanceledWhenParentAlreadyCanceled(t *testing.T) {
 func TestUnlimitedSubmitReturnsContextCanceledWhenParentAlreadyCanceled(t *testing.T) {
 	parent, cancel := context.WithCancel(context.Background())
 	cancel()
+	rootRan := errors.New("root ran after parent cancellation")
 
 	done := make(chan error, 1)
 	go func() {
 		done <- Root(parent, 0, func(context.Context, Thread) error {
-			t.Fatal("root ran after parent cancellation")
-			return nil
+			return rootRan
 		})
 	}()
 
-	if err := waitForErr(t, done, "unlimited Submit after parent cancellation"); !errors.Is(err, context.Canceled) {
+	err := waitForErr(t, done, "unlimited Submit after parent cancellation")
+	if errors.Is(err, rootRan) {
+		t.Fatal("root ran after parent cancellation")
+	}
+	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("Submit() error = %v, want %v", err, context.Canceled)
 	}
 }
