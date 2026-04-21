@@ -54,14 +54,34 @@ func TestClassesBuildsFromSplitAndVariadicInputs(t *testing.T) {
 			want: "test",
 		},
 		{
-			name: "join keeps add and remove lists",
-			in:   goxx.Class("test test1").Join(goxx.Class("test2").Remove("test1")),
+			name: "remove does not filter later adds",
+			in:   goxx.Class("test test1").Remove("test1").Add("test1"),
+			want: "test test1",
+		},
+		{
+			name: "filter single",
+			in:   goxx.Class("test test1 test2").Filter("test1"),
 			want: "test test2",
 		},
 		{
-			name: "remove can be added before target class",
-			in:   goxx.Class("test").Remove("test1").Add("test1 test2"),
+			name: "filter variadic and space separated",
+			in:   goxx.Class("test test1 test2 test3").Filter("test1", "test2 test3"),
+			want: "test",
+		},
+		{
+			name: "join keeps add and filter lists",
+			in:   goxx.Class("test test1").Join(goxx.Class("test2").Filter("test1")),
 			want: "test test2",
+		},
+		{
+			name: "filter can be added before target class",
+			in:   goxx.Class("test").Filter("test1").Add("test1 test2"),
+			want: "test test2",
+		},
+		{
+			name: "remove does not undo filters",
+			in:   goxx.Class("test").Filter("test1").Remove("test1").Add("test1"),
+			want: "test",
 		},
 	}
 
@@ -85,8 +105,18 @@ func TestClassesMethodsAreImmutable(t *testing.T) {
 		requireClassString(t, right, "base0 base1 base2 right")
 	})
 
+	t.Run("Filter", func(t *testing.T) {
+		base := goxx.Class("keep left right").Filter("unused0 unused1 unused2")
+		left := base.Filter("left")
+		right := base.Filter("right")
+
+		requireClassString(t, base, "keep left right")
+		requireClassString(t, left, "keep right")
+		requireClassString(t, right, "keep left")
+	})
+
 	t.Run("Remove", func(t *testing.T) {
-		base := goxx.Class("keep left right").Remove("unused0 unused1 unused2")
+		base := goxx.Class("keep left right")
 		left := base.Remove("left")
 		right := base.Remove("right")
 
@@ -106,10 +136,10 @@ func TestClassesMethodsAreImmutable(t *testing.T) {
 	})
 
 	t.Run("Clone", func(t *testing.T) {
-		base := goxx.Class("base0 base1 base2").Remove("unused0 unused1 unused2")
+		base := goxx.Class("base0 base1 base2").Filter("unused0 unused1 unused2")
 		clone := base.Clone()
 		left := clone.Add("left").Remove("base1")
-		right := clone.Add("right").Remove("base2")
+		right := clone.Add("right").Filter("base2")
 
 		requireClassString(t, base, "base0 base1 base2")
 		requireClassString(t, clone, "base0 base1 base2")
@@ -148,7 +178,7 @@ func TestClassesRenderThroughGeneratedSyntaxShapes(t *testing.T) {
 		if err := spanWithClassMod(cur, goxx.Class("test"), ""); err != nil {
 			return err
 		}
-		if err := spanWithClassMod(cur, goxx.Class("test").Remove("test2"), "test2"); err != nil {
+		if err := spanWithClassMod(cur, goxx.Class("test").Filter("test2"), "test2"); err != nil {
 			return err
 		}
 		if err := spanWithClassAttr(cur, goxx.Class("test")); err != nil {
@@ -157,19 +187,19 @@ func TestClassesRenderThroughGeneratedSyntaxShapes(t *testing.T) {
 		if err := goxx.Class("test").Proxy(cur, emptySpan()); err != nil {
 			return err
 		}
-		if err := goxx.Class("test").Remove("test2").Proxy(cur, spanWithClass("test2")); err != nil {
+		if err := goxx.Class("test").Filter("test2").Proxy(cur, spanWithClass("test2")); err != nil {
 			return err
 		}
 		if err := goxx.Class("test").Proxy(cur, test); err != nil {
 			return err
 		}
-		if err := goxx.Class("test").Remove("test2").Proxy(cur, test); err != nil {
+		if err := goxx.Class("test").Filter("test2").Proxy(cur, test); err != nil {
 			return err
 		}
 		if err := goxx.Class("test").Proxy(cur, test1); err != nil {
 			return err
 		}
-		if err := goxx.Class("test").Remove("test2").Proxy(cur, test1); err != nil {
+		if err := goxx.Class("test").Filter("test2").Proxy(cur, test1); err != nil {
 			return err
 		}
 		if err := goxx.Class("test").Proxy(cur, gox.Elem(func(cur gox.Cursor) error {
@@ -183,7 +213,7 @@ func TestClassesRenderThroughGeneratedSyntaxShapes(t *testing.T) {
 		})); err != nil {
 			return err
 		}
-		if err := goxx.Class("test").Remove("test2").Proxy(cur, gox.Elem(func(cur gox.Cursor) error {
+		if err := goxx.Class("test").Filter("test2").Proxy(cur, gox.Elem(func(cur gox.Cursor) error {
 			if err := cur.InitContainer(); err != nil {
 				return err
 			}
@@ -197,7 +227,7 @@ func TestClassesRenderThroughGeneratedSyntaxShapes(t *testing.T) {
 		if err := goxx.Class("test").Proxy(cur, test2); err != nil {
 			return err
 		}
-		return goxx.Class("test").Remove("test2").Proxy(cur, test2)
+		return goxx.Class("test").Filter("test2").Proxy(cur, test2)
 	})
 
 	got, err := renderString(root)

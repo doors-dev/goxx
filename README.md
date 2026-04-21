@@ -152,7 +152,7 @@ so variadic and space-separated forms are equivalent.
 ```go
 goxx.Class("button", "primary")
 goxx.Class("button primary")
-goxx.Class("button").Add("primary").Remove("hidden")
+goxx.Class("button hidden").Remove("hidden").Add("primary")
 ```
 
 You can use `Classes` as an attribute modifier:
@@ -180,7 +180,14 @@ elem Button() {
 }
 ```
 
-`Remove` is useful when wrapping a component that already has a class:
+`Remove` edits the current class list. The removed class can be added again
+later:
+
+```go
+goxx.Class("button hidden").Remove("hidden").Add("hidden").String() // "button hidden"
+```
+
+`Filter` is useful when wrapping a component that already has a class:
 
 ```go
 elem BaseButton() {
@@ -188,15 +195,16 @@ elem BaseButton() {
 }
 
 elem EnabledButton() {
-    ~>(goxx.Class("primary").Remove("disabled")) ~(BaseButton())
+    ~>(goxx.Class("primary").Filter("disabled")) ~(BaseButton())
 }
 ```
 
-`Remove` filters matching classes no matter whether they were added before or
-after the removal:
+`Filter` omits matching classes no matter whether they were added before or
+after the filter:
 
 ```go
-goxx.Class("button hidden").Remove("hidden").String() // "button"
+goxx.Class("button hidden").Filter("hidden").String() // "button"
+goxx.Class("button").Filter("hidden").Add("hidden").String() // "button"
 ```
 
 ## Proxy Helpers
