@@ -1,0 +1,82 @@
+package hx
+
+import (
+	"net/http"
+	
+	"github.com/doors-dev/gox"
+)
+
+elem testButton() {
+	<button (Post(testFragment))>Post!</button>
+}
+
+elem sameHandlerMethodButtons() {
+	<button (Get(testFragment))>Get</button>
+	<button (Post(testFragment))>Post</button>
+}
+
+elem dynamicButton(h HandlerFunc) {
+	<button (Post(h))>Dynamic</button>
+}
+
+elem testPage() {
+	<script src="https://unpkg.com/htmx.org@1.9.11/dist/htmx.min.js"></script>
+	<main>
+		<section>
+			<div id="get-result"></div>
+			<button id="get-button" (Get(getFragment)) hx-target="#get-result">Load</button>
+		</section>
+		<section>
+			<div id="post-result"></div>
+			<button id="post-button" (Post(postFragment)) hx-target="#post-result">Create</button>
+		</section>
+		<section>
+			<div id="put-result"></div>
+			<button id="put-button" (Put(putFragment)) hx-target="#put-result">Replace</button>
+		</section>
+		<section>
+			<div id="patch-result"></div>
+			<button id="patch-button" (Patch(patchFragment)) hx-target="#patch-result">Patch</button>
+		</section>
+		<section>
+			<div id="delete-result"><span id="delete-ready">ready</span></div>
+			<button id="delete-button" (Delete(deleteFragment)) hx-target="#delete-result">Delete</button>
+		</section>
+	</main>
+}
+
+elem getFragment(_ Responser, _ *http.Request) {
+	<span id="get-value">loaded by GET</span>
+}
+
+elem postFragment(w Responser, _ *http.Request) {
+	~{
+		w.SetStatus(http.StatusCreated)
+	}
+	<span id="post-value">created by POST</span>
+}
+
+elem putFragment(_ Responser, _ *http.Request) {
+	<span id="put-value">replaced by PUT</span>
+}
+
+elem patchFragment(_ Responser, _ *http.Request) {
+	<span id="patch-value">patched by PATCH</span>
+}
+
+elem deleteFragment(_ Responser, _ *http.Request) {
+	<span id="delete-value">deleted by DELETE</span>
+}
+
+elem textFragment(label string) {
+	~(label)
+}
+
+elem testFragment(w Responser, _ *http.Request) {
+	~{
+		w.Header().Set("X-HX-Test", "yes")
+		w.SetCookie(&http.Cookie{Name: "seen", Value: "true"})
+		w.SetStatus(http.StatusCreated)
+	}
+	<span>ok</span>
+}
