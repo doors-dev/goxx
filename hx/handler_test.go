@@ -12,6 +12,7 @@ import (
 	"github.com/doors-dev/gox"
 	"github.com/doors-dev/goxx"
 	"github.com/go-rod/rod"
+	"github.com/go-rod/rod/lib/launcher"
 )
 
 func TestHTMXE2E(t *testing.T) {
@@ -32,7 +33,8 @@ func TestHTMXE2E(t *testing.T) {
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
 
-	browser := rod.New().MustConnect()
+	browserURL := launcher.New().NoSandbox(true).MustLaunch()
+	browser := rod.New().ControlURL(browserURL).MustConnect()
 	t.Cleanup(browser.MustClose)
 
 	page := browser.MustPage(server.URL).MustWaitLoad()
