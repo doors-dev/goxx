@@ -9,7 +9,6 @@ GoX itself is intentionally minimal. `goxx` adds a few more specific,
 but still common, rendering helpers on top:
 
 - a parallel printer for independent slow template fragments
-- HTMX attribute and handler helpers
 - composable class helpers
 - small proxy utilities for building attribute-oriented helpers
 
