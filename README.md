@@ -3,6 +3,21 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/doors-dev/goxx)](https://goreportcard.com/report/github.com/doors-dev/goxx)
 [![Go Reference](https://pkg.go.dev/badge/github.com/doors-dev/goxx.svg)](https://pkg.go.dev/github.com/doors-dev/goxx)
 
+> [!WARNING]
+> **This project is not maintained, and it does not work with current GoX.**
+>
+> `goxx` supports `gox` v0.1.x and v0.2.x. GoX v0.3.0 removed `JobComp`, the
+> deferred component job that the parallel printer and the proxy helpers are
+> built on, so `goxx` does not compile against v0.3.0 or later. Catching up is
+> not a version bump: it needs a redesign, and that is not planned right now.
+>
+> If you depend on `goxx` today, pin `gox` v0.2.x or earlier. If you would like
+> it updated, please [open an issue](https://github.com/doors-dev/goxx/issues)
+> and say so.
+>
+> For most needs, take a look at [`doors`](https://github.com/doors-dev/doors)
+> instead. It is actively maintained and covers this ground.
+
 `goxx` is an extension package for [`github.com/doors-dev/gox`](https://github.com/doors-dev/gox).
 
 GoX itself is intentionally minimal. `goxx` adds a few more specific,
